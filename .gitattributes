@@ -1,0 +1,4 @@
+furigana-api/jmdict_all_eng.JSON filter=lfs diff=lfs merge=lfs -text
+furigana-api/jmdict_full.JSON filter=lfs diff=lfs merge=lfs -text
+src/furigana-api/jmdict_all_eng.json filter=lfs diff=lfs merge=lfs -text
+src/furigana-api/jmdict_full.json filter=lfs diff=lfs merge=lfs -text

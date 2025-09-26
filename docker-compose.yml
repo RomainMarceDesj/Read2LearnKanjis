@@ -1,0 +1,11 @@
+services:
+  read2learnkanji:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    container_name: read2learnkanji-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
