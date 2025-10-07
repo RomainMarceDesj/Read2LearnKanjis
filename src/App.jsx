@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Word from './Components/Word';
 import './App.css';
 import axios from 'axios';
+import { LoginForm, RegistrationForm, UserInfo} from './Components/AuthForms';
 
 const MemoizedWord = React.memo(Word);
 const API_BASE = "https://furiganaapi-production.up.railway.app"; //http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy)
@@ -21,9 +22,12 @@ function App() {
   const [imageFile, setImageFile] = useState(null);
   const [selectedLevel, setSelectedLevel] = useState(3); // Default to N5
   const [backendStatus, setBackendStatus] = useState("The back-end needs to boot up, this might take some time...");
- 
+  const [currentUser, setCurrentUser] = useState(null); // Stores username or user object
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Tracks login status
+  const [authError, setAuthError] = useState(''); // For displaying login/register errors
+  const [showRegister, setShowRegister] = useState(false);
 
-
+  
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -66,6 +70,63 @@ useEffect(() => {
   // eslint-disable-next-line
 }, [selectedLevel]);
 
+// --- NEW AUTHENTICATION HANDLERS ---
+
+const handleLogin = async (username, password) => {
+    setAuthError(''); // Clear previous error
+    try {
+        const response = await axios.post(`${API_BASE}/login`, { username, password }, {
+            // This is crucial for Flask-Login! It ensures the session cookie is sent and received.
+            withCredentials: true 
+        });
+
+        if (response.status === 200) {
+            // Flask returns a 'username' on success
+            setCurrentUser(response.data.username);
+            setIsAuthenticated(true);
+            setAuthError('');
+            return true;
+        }
+    } catch (error) {
+        const errorMsg = error.response?.data?.error || 'Login failed due to network error.';
+        setAuthError(errorMsg);
+        return false;
+    }
+};
+
+const handleRegister = async (username, password) => {
+    setAuthError('');
+    try {
+        const response = await axios.post(`${API_BASE}/register`, { username, password });
+
+        if (response.status === 201) {
+            setAuthError("Registration successful! Please log in.");
+            return true;
+        }
+    } catch (error) {
+        const errorMsg = error.response?.data?.error || 'Registration failed.';
+        setAuthError(errorMsg);
+        return false;
+    }
+};
+
+const handleLogout = async () => {
+    try {
+        // Send request to Flask to clear the session cookie
+        await axios.get(`${API_BASE}/logout`, {
+            withCredentials: true // Must send credentials to clear the session
+        });
+        
+        // Clear front-end state
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+        setAuthError('Logged out successfully.');
+    } catch (error) {
+        console.error("Logout failed:", error);
+    }
+};
+
+// ----- File section ------------
 
   const handleFileChange = (event) => {
     // Reset selected book when a file is uploaded
@@ -320,6 +381,26 @@ function defineWordDisplay(word, selectedLevel) {
 
   return (
     <>
+      {/* Authentication Section */}
+      <div>
+        {!isAuthenticated ? (
+          showRegister ? (
+            <RegistrationForm
+              onRegister={handleRegister}
+              authError={authError}
+              switchToLogin={() => setShowRegister(false)}
+            />
+          ) : (
+            <LoginForm
+              onLogin={handleLogin}
+              authError={authError}
+              switchToRegister={() => setShowRegister(true)}
+            />
+          )
+        ) : (
+          <UserInfo currentUser={currentUser} handleLogout={handleLogout} />
+        )}
+      </div>
 
       <h1> Read2LearnKanji</h1>
       <h2> Just read, and you'll learn.</h2>
@@ -382,18 +463,18 @@ function defineWordDisplay(word, selectedLevel) {
         <button onClick={() => handleBookSelect('momotaro.txt')}>momotaro (easy)</button>
         <button onClick={() => handleBookSelect('Book3.txt')}>Book 3</button> 
       </div> */} 
-      <div className="level-select">
+      {/*<div className="level-select">
         <button onClick={() => {setSelectedLevel(5)}}>N5</button>
         <button onClick={() => {setSelectedLevel(4)}}>N4</button>
         <button onClick={() => {setSelectedLevel(3)}}>N3</button>
         <button onClick={() => {setSelectedLevel(2)}}>N2</button>
         <button onClick={() => {setSelectedLevel(1)}}>N1</button>
-      </div>
+      </div>*/} 
 
       
       <div> 
         <p className="userInformation">Click on words to toggle furigana and translations!</p>
-        <p className="userInformation">try to change the JLPT difficulty level as well!</p>
+        {/*<p className="userInformation">try to change the JLPT difficulty level as well!</p>*/}
       </div>
       <div className="main_text" style={{ lineHeight: 1.8 }}>
         {isLoading && !prefetchedData[`page_${currentPage}`] ? (
