@@ -2,10 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import Word from './Components/Word';
 import './App.css';
 import axios from 'axios';
-import { LoginForm, RegistrationForm, UserInfo} from './Components/AuthForms';
 
 const MemoizedWord = React.memo(Word);
-const API_BASE = "https://furiganaapi-production.up.railway.app"; //http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy)
+const API_BASE = "https://furiganaapi-production.up.railway.app"; //http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy) https://furiganaapi-production.up.railway.app
 
 
 
@@ -70,61 +69,26 @@ useEffect(() => {
   // eslint-disable-next-line
 }, [selectedLevel]);
 
-// --- NEW AUTHENTICATION HANDLERS ---
+// ==================== Used ID section ==========================
 
-const handleLogin = async (username, password) => {
-    setAuthError(''); // Clear previous error
-    try {
-        const response = await axios.post(`${API_BASE}/login`, { username, password }, {
-            // This is crucial for Flask-Login! It ensures the session cookie is sent and received.
-            withCredentials: true 
-        });
-
-        if (response.status === 200) {
-            // Flask returns a 'username' on success
-            setCurrentUser(response.data.username);
-            setIsAuthenticated(true);
-            setAuthError('');
-            return true;
-        }
-    } catch (error) {
-        const errorMsg = error.response?.data?.error || 'Login failed due to network error.';
-        setAuthError(errorMsg);
-        return false;
+const handleUserIdCheck = async (userId) => {
+  setAuthError('');
+  try {
+    const response = await axios.post(`${API_BASE}/verify_user`, { user_id: userId });
+    if (response.status === 200) {
+      setCurrentUser(response.data.userId);
+      setIsAuthenticated(true);
+      setAuthError('');
+      return true;
     }
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || 'Invalid User ID.';
+    setAuthError(errorMsg);
+    setIsAuthenticated(false);
+    return false;
+  }
 };
 
-const handleRegister = async (username, password) => {
-    setAuthError('');
-    try {
-        const response = await axios.post(`${API_BASE}/register`, { username, password });
-
-        if (response.status === 201) {
-            setAuthError("Registration successful! Please log in.");
-            return true;
-        }
-    } catch (error) {
-        const errorMsg = error.response?.data?.error || 'Registration failed.';
-        setAuthError(errorMsg);
-        return false;
-    }
-};
-
-const handleLogout = async () => {
-    try {
-        // Send request to Flask to clear the session cookie
-        await axios.get(`${API_BASE}/logout`, {
-            withCredentials: true // Must send credentials to clear the session
-        });
-        
-        // Clear front-end state
-        setCurrentUser(null);
-        setIsAuthenticated(false);
-        setAuthError('Logged out successfully.');
-    } catch (error) {
-        console.error("Logout failed:", error);
-    }
-};
 
 // ----- File section ------------
 
@@ -381,26 +345,24 @@ function defineWordDisplay(word, selectedLevel) {
 
   return (
     <>
-      {/* Authentication Section 
-      <div>
+      {/* Authentication Section */}
+      <div className="auth-section" style={{ marginBottom: '1rem' }}>
         {!isAuthenticated ? (
-          showRegister ? (
-            <RegistrationForm
-              onRegister={handleRegister}
-              authError={authError}
-              switchToLogin={() => setShowRegister(false)}
+          <>
+            <p>Enter your User ID:</p>
+            <input
+              type="text"
+              placeholder="e.g. user123"
+              onChange={(e) => setCurrentUser(e.target.value)}
+              style={{ padding: '0.4rem', marginRight: '0.5rem' }}
             />
-          ) : (
-            <LoginForm
-              onLogin={handleLogin}
-              authError={authError}
-              switchToRegister={() => setShowRegister(true)}
-            />
-          )
+            <button onClick={() => handleUserIdCheck(currentUser)}>Enter</button>
+            {authError && <p style={{ color: 'red' }}>{authError}</p>}
+          </>
         ) : (
-          <UserInfo currentUser={currentUser} handleLogout={handleLogout} />
+          <p>Welcome back, <strong>{currentUser}</strong>!</p>
         )}
-      </div>*/}
+      </div>
 
       <h1> Read2LearnKanji</h1>
       <h2> Just read, and you'll learn.</h2>
