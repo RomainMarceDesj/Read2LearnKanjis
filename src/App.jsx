@@ -4,7 +4,7 @@ import './App.css';
 import axios from 'axios';
 
 const MemoizedWord = React.memo(Word);
-const API_BASE = "https://furiganaapi-production.up.railway.app"; //http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy) https://furiganaapi-production.up.railway.app
+const API_BASE = "http://127.0.0.1:5000"; // http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy) https://furiganaapi-production.up.railway.app
 
 
 
@@ -69,6 +69,32 @@ useEffect(() => {
   // eslint-disable-next-line
 }, [selectedLevel]);
 
+//sending final show val data when navigating away from page
+
+
+
+// ✅ Always send most recent wordData when leaving page, changing page, or resetting
+useEffect(() => {
+  // When user leaves the page (closing tab, refreshing)
+  const handleBeforeUnload = () => {
+    if (!isAuthenticated || !currentUser || wordData.length === 0) return;
+    sendUpdateData(wordData, true); // true = useBeacon
+  };
+
+  window.addEventListener("beforeunload", handleBeforeUnload);
+
+  return () => {
+    // When navigating away (page change)
+    if (wordData.length > 0) {
+      sendUpdateData(wordData);
+    }
+    window.removeEventListener("beforeunload", handleBeforeUnload);
+  };
+  // reattach listener when data or user changes
+}, [isAuthenticated, currentUser, currentPage]);
+
+
+
 // ==================== Used ID section ==========================
 
 const handleUserIdCheck = async (userId) => {
@@ -118,14 +144,14 @@ const handleUserIdCheck = async (userId) => {
     }
   };
 
-  const handleBookSelect = (bookName) => {
+  {/*const handleBookSelect = (bookName) => {
     // Reset uploaded file when a pre-selected book is chosen
     setFile(null);
     setImageFile(null);
     setSelectedBook(bookName);
     setCurrentPage(0);
     setPrefetchedData({});
-  };
+  };*/}
 
   const handleCancel = () => {
     if (controllerRef.current) {
@@ -136,21 +162,18 @@ const handleUserIdCheck = async (userId) => {
   };
 
   const handleReset = () => {
-    if (controllerRef.current) {
-      controllerRef.current.abort();
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-    if (imageInputRef.current) {
-      imageInputRef.current.value = "";
-    }
+    // 🔑 NEW: Explicitly send the final state of the current page before clearing state
+     sendUpdateData(wordData); // always send before clearing
+
+    if (controllerRef.current) {controllerRef.current.abort();}
+    if (fileInputRef.current) {fileInputRef.current.value = "";}
+    if (imageInputRef.current) {imageInputRef.current.value = "";}
     setWordData([]);
-    setCurrentPage(0);
+    setCurrentPage(0); // If this is already 0, the useEffect cleanup won't run.
     setTotalLength(0);
     setFile(null);
     setImageFile(null);
-    setSelectedBook(null); // Reset selected book
+    setSelectedBook(null);
     setIsLoading(false);
     setPrefetchedData({});
   };
@@ -176,6 +199,7 @@ const handleUserIdCheck = async (userId) => {
       formData.append('image_file', imageFile, imageFile.name);
       formData.append('start_position', pageNumber * pageSizeCharacter);
       formData.append('page_size', pageSizeCharacter);
+      formData.append("user_id", currentUser);
       postData = formData;
       
       // Debug: Log FormData contents
@@ -187,6 +211,7 @@ const handleUserIdCheck = async (userId) => {
       formData.append('file', file);
       formData.append('start_position', pageNumber * pageSizeCharacter);
       formData.append('page_size', pageSizeCharacter);
+      formData.append("user_id", currentUser);
       postData = formData;
     } else if (selectedBook) {
       endpoint = '/analyze';
@@ -226,6 +251,8 @@ const handleUserIdCheck = async (userId) => {
   }
 }
 
+//=================== Helper functions related to furigana display =========================
+
 
 //helper function to set initial word display based on selected level
 function handleApiData(data) {
@@ -257,8 +284,6 @@ function calculatePowerJlptAverage(kanjiLevels) {
     return powerSum / kanjiLevels.length;
 }
 
-
-
 //function that determines level of each word on render
 
 
@@ -274,7 +299,7 @@ function defineWordDisplay(word, selectedLevel) {
   // User's level and "two up" level as power scores
   const userLevelScore = Math.pow(6 - selectedLevel, 2);
   const twoUpScore = Math.pow(6 - (selectedLevel - 2), 2);
-  console.log(word.kanji, "'s levels are :", kanjiLevels);
+  //console.log(word.kanji, "'s levels are :", kanjiLevels);
   if (score <= userLevelScore) {
     // Word is easier or equal to user's level
     return { ...word, showFurigana: false, showTranslation: false };
@@ -287,6 +312,83 @@ function defineWordDisplay(word, selectedLevel) {
   }
   return word;
 }
+
+//---- ShowVal state sending section -----
+
+// Helper to map current word display state to the backend's final_show_val (0, 1, or 2)
+  const getFinalShowVal = (word) => {
+    if (word.showFurigana && word.showTranslation) {
+      return 2; // HARD: Translation was shown
+    } else if (word.showFurigana) {
+      return 1; // MEDIUM: Furigana was shown
+    } else {
+      return 0; // EASY: Nothing was shown
+    }
+  };
+  
+  // Function to send the final state of all words on a page to the API
+  const sendUpdateData = (dataToSend, useBeacon = false) => {
+    console.log("sendUpdateData called", {
+      isAuthenticated,
+      currentUser,
+      dataLength: dataToSend.length
+    });
+    if (!isAuthenticated || !currentUser || dataToSend.length === 0) return;
+
+  const wordsToUpdate = dataToSend.flat().filter(word => word.kanji);
+  console.log("wordsToUpdate:", wordsToUpdate.map(w => w.kanji || w.value));
+  if (wordsToUpdate.length === 0) return;
+
+  if (useBeacon) {
+    // ✅ Fallback-safe synchronous sending for tab close
+    wordsToUpdate.forEach(word => {
+      const finalShowVal = getFinalShowVal(word);
+      const token = word.kanji || word.value;
+      if (!token) return;
+      const payload = {
+        user_id: currentUser,
+        token,
+        final_show_val: finalShowVal
+      };
+      const blob = new Blob([JSON.stringify(payload)], {
+        type: "application/json"
+      });
+      navigator.sendBeacon(`${API_BASE}/update_scan_data`, blob);
+    });
+    return;
+  }
+
+  // Normal async sending (navigation/reset)
+  const updates = wordsToUpdate.map(word => {
+    const finalShowVal = getFinalShowVal(word);
+    const token = word.kanji || word.value;
+    if (!token) return Promise.resolve();
+    const payload = {
+      user_id: currentUser,
+      token,
+      final_show_val: finalShowVal
+    };
+    console.log("Payload:", payload);
+    return axios
+      .post(`${API_BASE}/update_scan_data`, payload)
+      .catch(err =>
+        console.error(
+          `Failed to update score for ${token}:`,
+          err.response?.data || err.message
+        )
+      );
+  });
+
+  Promise.allSettled(updates).then(results => {
+    const failed = results.filter(r => r.status === "rejected").length;
+    console.log(
+      failed === 0
+        ? `Successfully sent ${wordsToUpdate.length} updates.`
+        : `${failed} updates failed.`
+    );
+  });
+};
+
 
    function handleSwipe(id) {
   setWordData(prev =>
@@ -454,9 +556,6 @@ function defineWordDisplay(word, selectedLevel) {
         <button onClick={handleNextPage} disabled={(currentPage + 1) * pageSizeCharacter >= totalLength}>Next Page</button>
       </div>
       
-      <div > <p className="userInformation">~This is only a proof of concept~</p> 
-      <p className="userInformation" > if you are curious about the final output, visit the Concordia booth! ;)</p>
-      </div>
     </>
   );
 }
