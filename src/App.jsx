@@ -19,7 +19,6 @@ function App() {
   const [prefetchedData, setPrefetchedData] = useState({});
   const [selectedBook, setSelectedBook] = useState(null); // New state for pre-selected books
   const [imageFile, setImageFile] = useState(null);
-  const [selectedLevel, setSelectedLevel] = useState(3); // Default to N5
   const [backendStatus, setBackendStatus] = useState("The back-end needs to boot up, this might take some time...");
   const [currentUser, setCurrentUser] = useState(null); // Stores username or user object
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Tracks login status
@@ -56,18 +55,6 @@ useEffect(() => {
             setBackendStatus("Warm-up unsuccessfull, try sending a document or a picture (it might take a few seconds at first)");
         });
 }, []);
-
-// 2. Remap wordData when JLPT level changes (but only if there is data)
-useEffect(() => {
-  if (wordData.length > 0) {
-    setWordData(prev =>
-      prev.map(paragraph =>
-        paragraph.map(word => defineWordDisplay(word, selectedLevel))
-      )
-    );
-  }
-  // eslint-disable-next-line
-}, [selectedLevel]);
 
 //sending final show val data when navigating away from page
 
@@ -257,61 +244,31 @@ const handleUserIdCheck = async (userId) => {
 //helper function to set initial word display based on selected level
 function handleApiData(data) {
   const processedData = data.data.map(paragraph =>
-    paragraph.map(word => defineWordDisplay(word, selectedLevel))
+    paragraph.map(word => defineWordDisplayByDifficulty(word))
   );
   setWordData(processedData);
   setTotalLength(data.totalLength);
 }
 
 
-//Using a power for weighted average to determine kanji difficulty
-function calculatePowerJlptAverage(kanjiLevels) {
-    if (!kanjiLevels || kanjiLevels.length === 0) {
-        return 0;
-    }
+// ==================== Word display logic based on difficulty score =========================
 
-    // You can adjust this exponent to change the steepness of the difficulty curve.
-    const p = 2; 
+function defineWordDisplayByDifficulty(word) {
+  const diff = word.readPropScore ?? 0; // fallback for safety
 
-    // Use .reduce() to sum the difficulty levels raised to the power of p.
-    const powerSum = kanjiLevels.reduce((sum, kanji) => {
-        // We use (6 - kanji.jlpt_level) to invert the scale (N5 = 1, N4 = 2, ..., N1 = 5)
-        const invertedJlpt = 6 - kanji.jlpt_level;
-        return sum + Math.pow(invertedJlpt, p);
-    }, 0);
-
-    // Calculate the average of the power sum
-    return powerSum / kanjiLevels.length;
-}
-
-//function that determines level of each word on render
-
-
-function defineWordDisplay(word, selectedLevel) {
-  const kanjiLevels = word.kanji_levels;
-  if (!kanjiLevels || kanjiLevels.length === 0) {
+  // These thresholds can be tuned later
+  if (diff >= 1) {
+    // Easy → Hide everything
     return { ...word, showFurigana: false, showTranslation: false };
-  }
-
-  // Calculate power score (higher = harder)
-  const score = calculatePowerJlptAverage(kanjiLevels);
-
-  // User's level and "two up" level as power scores
-  const userLevelScore = Math.pow(6 - selectedLevel, 2);
-  const twoUpScore = Math.pow(6 - (selectedLevel - 2), 2);
-  //console.log(word.kanji, "'s levels are :", kanjiLevels);
-  if (score <= userLevelScore) {
-    // Word is easier or equal to user's level
-    return { ...word, showFurigana: false, showTranslation: false };
-  } else if (score > userLevelScore && score < twoUpScore) {
-    // Word is harder than user's level, but not much harder
+  } else if (diff >= -0.5) {
+    // Medium → Show only furigana
     return { ...word, showFurigana: true, showTranslation: false };
-  } else if (score >= twoUpScore) {
-    // Word is much harder
+  } else {
+    // Hard → Show both furigana and translation
     return { ...word, showFurigana: true, showTranslation: true };
   }
-  return word;
 }
+
 
 //---- ShowVal state sending section -----
 
@@ -436,7 +393,6 @@ function defineWordDisplay(word, selectedLevel) {
           kanji={item.kanji}
           showFurigana={item.showFurigana}
           showTranslation={item.showTranslation}
-          kanjiDifficulty={item.kanji_levels}
           type={item.type}
           id={item.id}
           value={item.value}
@@ -446,7 +402,7 @@ function defineWordDisplay(word, selectedLevel) {
   ));
 
   return (
-    <>
+    <div className="app-container">
       {/* Authentication Section */}
       <div className="auth-section" style={{ marginBottom: '1rem' }}>
         {!isAuthenticated ? (
@@ -466,8 +422,10 @@ function defineWordDisplay(word, selectedLevel) {
         )}
       </div>
 
-      <h1> Read2LearnKanji</h1>
-      <h2> Just read, and you'll learn.</h2>
+      {isAuthenticated && currentUser && (
+        <>
+          <h1> Read2LearnKanji</h1>
+          <h2> Just read, and you'll learn.</h2>
       <div > <p>{backendStatus}</p>  </div>
       
       
@@ -520,21 +478,13 @@ function defineWordDisplay(word, selectedLevel) {
           <button onClick={handleReset}>Reset</button>
       </div>    
 
-       Pre-selected Books Section 
+      {/* Pre-selected Books Section */}
       {/*<div className="pre-selected-books">
         <p>Or choose a pre-selected book:</p>
         <button onClick={() => handleBookSelect('City_and_country_side')}>city vs country-side life (~N3)</button>
         <button onClick={() => handleBookSelect('momotaro.txt')}>momotaro (easy)</button>
         <button onClick={() => handleBookSelect('Book3.txt')}>Book 3</button> 
-      </div> */} 
-      {/*<div className="level-select">
-        <button onClick={() => {setSelectedLevel(5)}}>N5</button>
-        <button onClick={() => {setSelectedLevel(4)}}>N4</button>
-        <button onClick={() => {setSelectedLevel(3)}}>N3</button>
-        <button onClick={() => {setSelectedLevel(2)}}>N2</button>
-        <button onClick={() => {setSelectedLevel(1)}}>N1</button>
-      </div>*/} 
-
+      </div> */}
       
       <div> 
         <p className="userInformation">Click on words to toggle furigana and translations!</p>
@@ -556,7 +506,9 @@ function defineWordDisplay(word, selectedLevel) {
         <button onClick={handleNextPage} disabled={(currentPage + 1) * pageSizeCharacter >= totalLength}>Next Page</button>
       </div>
       
-    </>
+        </>
+      )}
+    </div>
   );
 }
 export default App;
