@@ -4,7 +4,7 @@ import './App.css';
 import axios from 'axios';
 
 const MemoizedWord = React.memo(Word);
-const API_BASE = "http://127.0.0.1:5000"; // http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy) https://furiganaapi-production.up.railway.app
+const API_BASE = "https://furiganaapi-production.up.railway.app"; // http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy) https://furiganaapi-production.up.railway.app
 
 
 
