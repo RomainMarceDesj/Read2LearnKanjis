@@ -260,7 +260,7 @@ function defineWordDisplayByDifficulty(word) {
   if (diff >= -0.75) {
     // Easy → Hide everything
     return { ...word, showFurigana: false, showTranslation: false };
-  } else if (diff >= 0.35) {
+  } else if (diff >= -0.35) {
     // Medium → Show only furigana
     return { ...word, showFurigana: true, showTranslation: false };
   } else {
