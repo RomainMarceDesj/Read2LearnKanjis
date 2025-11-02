@@ -257,10 +257,10 @@ function defineWordDisplayByDifficulty(word) {
   const diff = word.readPropScore ?? 0; // fallback for safety
 
   // These thresholds can be tuned later
-  if (diff >= -0.45) {
+  if (diff >= -0.4) {
     // Easy → Hide everything
     return { ...word, showFurigana: false, showTranslation: false };
-  } else if (diff >= -0.6) {
+  } else if (diff >= -1) {
     // Medium → Show only furigana
     return { ...word, showFurigana: true, showTranslation: false };
   } else {
