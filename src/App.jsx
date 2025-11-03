@@ -20,8 +20,8 @@ function App() {
   const [selectedBook, setSelectedBook] = useState(null); // New state for pre-selected books
   const [imageFile, setImageFile] = useState(null);
   const [backendStatus, setBackendStatus] = useState("The back-end needs to boot up, this might take some time...");
-  const [currentUser, setCurrentUser] = useState(null); // Stores username or user object
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // Tracks login status
+  const [currentUser, setCurrentUser] = useState("user123"); // Stores username or user object
+  const [isAuthenticated, setIsAuthenticated] = useState(true); // Tracks login status
   const [authError, setAuthError] = useState(''); // For displaying login/register errors
   const [showRegister, setShowRegister] = useState(false);
 
