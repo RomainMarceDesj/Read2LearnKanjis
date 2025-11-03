@@ -20,8 +20,8 @@ function App() {
   const [selectedBook, setSelectedBook] = useState(null); // New state for pre-selected books
   const [imageFile, setImageFile] = useState(null);
   const [backendStatus, setBackendStatus] = useState("The back-end needs to boot up, this might take some time...");
-  const [currentUser, setCurrentUser] = useState("userKMD+"); // Stores username or user object
-  const [isAuthenticated, setIsAuthenticated] = useState(true); // Tracks login status
+  const [currentUser, setCurrentUser] = useState(null); // Stores username or user object
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Tracks login status
   const [authError, setAuthError] = useState(''); // For displaying login/register errors
   const [showRegister, setShowRegister] = useState(false);
 
@@ -206,6 +206,7 @@ const handleUserIdCheck = async (userId) => {
         filepath: selectedBook,
         start_position: pageNumber * pageSizeCharacter,
         page_size: pageSizeCharacter,
+        user_id: currentUser
       };
       config.headers = { "Content-Type": "application/json" }; // 🔑 send JSON properly
     } else {
@@ -254,13 +255,13 @@ function handleApiData(data) {
 // ==================== Word display logic based on difficulty score =========================
 
 function defineWordDisplayByDifficulty(word) {
-  const diff = word.readPropScore ?? 0; // fallback for safety
-
+  const score = word.readPropScore ?? 0; // fallback for safety
+ console.log(`Word: ${word.kanji || word.value}, Score: ${score}`);
   // These thresholds can be tuned later
-  if (diff >= -0.3) {
+  if (score >= -0.4) {
     // Easy → Hide everything
     return { ...word, showFurigana: false, showTranslation: false };
-  } else if (diff >= -0.65) {
+  } else if (score >= -0.7) {
     // Medium → Show only furigana
     return { ...word, showFurigana: true, showTranslation: false };
   } else {
