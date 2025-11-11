@@ -332,10 +332,10 @@ function defineWordDisplayByDifficulty(word) {
   const score = word.readPropScore ?? 0; // fallback for safety
  console.log(`Word: ${word.kanji || word.value}, Score: ${score}`);
   // These thresholds can be tuned later
-  if (score >= -0.4) {
+  if (score >= -0.3) {
     // Easy → Hide everything
     return { ...word, showFurigana: false, showTranslation: false };
-  } else if (score >= -0.7) {
+  } else if (score >= -0.5) {
     // Medium → Show only furigana
     return { ...word, showFurigana: true, showTranslation: false };
   } else {
