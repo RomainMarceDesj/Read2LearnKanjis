@@ -43,18 +43,54 @@ function App() {
 
 
 // launch a warmup call to the backend on initial render
-useEffect(() => {
-    axios.get(`${API_BASE}/warmup`)
-        .then(response => {
-            console.log("Backend warmed up:", response.data);
+// --- App.jsx (Replace the useEffect that starts around line 53) ---
+
+// Define the comprehensive health check function
+const checkBackendHealth = async () => {
+    // 🔑 IMPORTANT: Call the /health endpoint, not /warmup
+    const healthUrl = `${API_BASE}/health`; 
+    console.log(`Starting comprehensive health check at: ${healthUrl}`);
+
+    try {
+        const response = await axios.get(healthUrl);
+        const statusData = response.data; 
+        
+        // 1. Check overall server status (Backend Warmup)
+        if (response.status === 200 && statusData.status === "healthy") {
+            console.log("✅ BACKEND WARMUP SUCCESSFUL: Server is running and responding.");
             setBackendStatus("Back-end connected! Get reading!");
-            // You can set a status state here if you want to display a "ready" message
-        })
-        .catch(error => {
-            console.error("Warmup failed:", error);
-            setBackendStatus("Warm-up unsuccessfull, try sending a document or a picture (it might take a few seconds at first)");
-        });
-}, []);
+        } else {
+            console.error(`❌ BACKEND WARMUP FAILED: Server responded with status ${response.status}.`, statusData);
+            setBackendStatus("Warm-up unsuccessfull. Check console for details.");
+        }
+
+        // 2. Check individual database connection (MongoDB)
+        const userDbStatus = statusData.checks.user_db;
+
+        if (userDbStatus && userDbStatus.startsWith("OK")) {
+            console.log("✅ DATABASE CONNECTION SUCCESSFUL: MongoDB (user_db) is accessible.");
+        } else {
+            // Log the error message from the backend's response
+            console.error(`❌ DATABASE CONNECTION FAILED: MongoDB (user_db) reported: ${userDbStatus}`);
+        }
+        
+    } catch (error) {
+        // Handle critical network/CORS/unreachable server errors
+        const errorMsg = error.response?.data?.error || error.message;
+        console.error("❌ CRITICAL WARMUP FAILURE: The backend service is unreachable or network error occurred.", errorMsg);
+        setBackendStatus("Connection error. The back-end may be down.");
+    }
+};
+
+// launch a comprehensive health check on initial render
+useEffect(() => {
+    // 🔑 Run the new check function on component mount
+    checkBackendHealth();
+}, []); // Empty dependency array ensures it runs only once on mount
+
+// --- End Replacement ---
+
+
 
 //sending final show val data when navigating away from page
 
