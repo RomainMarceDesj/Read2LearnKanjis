@@ -86,7 +86,8 @@ const checkBackendHealth = async () => {
 useEffect(() => {
     // 🔑 Run the new check function on component mount
     checkBackendHealth();
-}, []); // Empty dependency array ensures it runs only once on mount
+    checkPersistedLogin(); 
+  }, []); // Empty dependency array ensures it runs only once on mount
 
 // --- End Replacement ---
 
@@ -128,6 +129,7 @@ const handleUserIdCheck = async (userId) => {
       setCurrentUser(response.data.userId);
       setIsAuthenticated(true);
       setAuthError('');
+      localStorage.setItem('currentUserId', userId);
       return true;
     }
   } catch (error) {
@@ -136,6 +138,42 @@ const handleUserIdCheck = async (userId) => {
     setIsAuthenticated(false);
     return false;
   }
+};
+
+
+// stay loggedIn
+
+const checkPersistedLogin = () => {
+    // Retrieve the user ID from the browser's local storage
+    const persistedUserId = localStorage.getItem('currentUserId'); 
+    
+    if (persistedUserId) {
+        // If a stored ID is found, restore the session state
+        setCurrentUser(persistedUserId);
+        setIsAuthenticated(true);
+        console.log(`User ${persistedUserId} found in local storage. Session restored.`);
+        
+        // Note: You should ideally call the /verify_user endpoint here 
+        // to re-fetch the user's latest kanji proficiency data on load.
+    }
+};
+
+// Loggout section 
+
+const handleLogout = () => {
+    // 1. Clear the persistent storage key
+    localStorage.removeItem('currentUserId');
+    
+    // 2. Reset the application state
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    
+    // 3. (Optional but recommended) Clear any temporary data to ensure a clean slate
+    setWordData([]);
+    setTotalLength(0);
+    setPrefetchedData({});
+    
+    console.log("User logged out successfully.");
 };
 
 
@@ -542,7 +580,12 @@ function defineWordDisplayByDifficulty(word) {
         <span>Page {currentPage + 1}</span>
         <button onClick={handleNextPage} disabled={(currentPage + 1) * pageSizeCharacter >= totalLength}>Next Page</button>
       </div>
-      
+      <div>
+        <button onClick={handleLogout}>
+        Logout ({currentUser})
+        </button>
+
+      </div>
         </>
       )}
     </div>
