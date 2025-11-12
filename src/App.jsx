@@ -506,16 +506,29 @@ function defineWordDisplayByDifficulty(word) {
       
       
       {/* File Upload Section */}
-      <div className="file-upload">
-        <label htmlFor="file-input">
-          <button onClick={() => fileInputRef.current && fileInputRef.current.click()}>Upload Document</button>
-        </label>
-        <input type="file" onChange={handleFileChange} id="file-input" ref={fileInputRef} style={{ display: 'none' }} accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"/>
-        
+      <div className="image-upload">
+
+        <div >
+            <label htmlFor="file-input">
+              <button onClick={() => fileInputRef.current && fileInputRef.current.click()}>Upload Document</button>
+            </label>
+            <input type="file" onChange={handleFileChange} id="file-input" ref={fileInputRef} style={{ display: 'none' }} accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"/>
+          </div>
+        {/*<p>Upload an image</p>*/}
+        <button onClick={() => imageInputRef.current && imageInputRef.current.click()}>Upload local Image</button>
+        <input
+          type="file"
+          onChange={handleImageFileChange}
+          id="upload-input"
+          ref={imageInputRef}
+          style={{ display: 'none' }}
+          accept="image/*"
+        />
       </div>
+          
 
       {/* Picture Upload Section */}
-      <div className="image-upload">
+      <div className="take-picture">
         {/*<p>Take a picture</p>*/}
         <button onClick={() => cameraInputRef.current && cameraInputRef.current.click()}>Take picture</button>
         <input
@@ -527,19 +540,6 @@ function defineWordDisplayByDifficulty(word) {
           accept="image/*"
           capture="environment"
         />
-
-        <p>or</p>
-
-        {/*<p>Upload an image</p>*/}
-        <button onClick={() => imageInputRef.current && imageInputRef.current.click()}>Upload Image</button>
-        <input
-          type="file"
-          onChange={handleImageFileChange}
-          id="upload-input"
-          ref={imageInputRef}
-          style={{ display: 'none' }}
-          accept="image/*"
-        />
       </div>
 
       <div> 
@@ -548,7 +548,7 @@ function defineWordDisplayByDifficulty(word) {
 
       {/*submit, reset and cancel buttons */}
       <div className="control-buttons">
-          <button onClick={handleSubmit} disabled={!file && !imageFile && !selectedBook}>Submit</button>
+          {/*<button onClick={handleSubmit} disabled={!file && !imageFile && !selectedBook}>Submit</button>*/}
           {isLoading && <button onClick={handleCancel}>Cancel</button>}
           <button onClick={handleReset}>Reset</button>
       </div>    
