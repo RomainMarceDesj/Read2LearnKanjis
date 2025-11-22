@@ -4,7 +4,7 @@ import './App.css';
 import axios from 'axios';
 
 const MemoizedWord = React.memo(Word);
-const API_BASE = "https://furiganaapi-production.up.railway.app"; // http://127.0.0.1:5000 (local) http://127.0.0.1:8080 (deploy) https://furiganaapi-production.up.railway.app
+const API_BASE = "https://furiganaapi-production.up.railway.app"; // http://127.0.0.1:5000 (local) https://furiganaapi-production.up.railway.app
 
 
 
@@ -24,7 +24,14 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Tracks login status
   const [authError, setAuthError] = useState(''); // For displaying login/register errors
   const [showRegister, setShowRegister] = useState(false);
-
+    const [sessionId, setSessionId] = useState(null);
+  const [pageStartTime, setPageStartTime] = useState(Date.now());
+  const [wordsClickedThisPage, setWordsClickedThisPage] = useState(0);
+  const [wordInteractionTracker, setWordInteractionTracker] = useState({});
+  const [lastClickTime, setLastClickTime] = useState(null);
+  const [clickIntervals, setClickIntervals] = useState([]);
+  const [totalClicksInSession, setTotalClicksInSession] = useState(0);
+  
   
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -33,6 +40,20 @@ function App() {
 
 
 
+  useEffect(() => {
+    if (isAuthenticated && currentUser && !sessionId) {
+      startSession();
+    }
+  }, [isAuthenticated, currentUser]);
+
+
+    useEffect(() => {
+    return () => {
+      if (sessionId) {
+        endSession();
+      }
+    };
+  }, [sessionId]);
 
    useEffect(() => {
   if (file || imageFile || selectedBook) {
@@ -41,6 +62,67 @@ function App() {
   // eslint-disable-next-line
   }, [file, imageFile, selectedBook, currentPage]);
 
+
+  useEffect(() => {
+    setClickIntervals([]);
+    setLastClickTime(null);
+  }, [currentPage]);
+
+
+  useEffect(() => {
+  if (!sessionId || wordData.length === 0) return;
+  
+  const heartbeatInterval = setInterval(() => {
+    const totalWordsOnPage = wordData.flat().filter(w => w.type === "word").length;
+    
+    // Calculate click interval stats
+    const avgInterval = clickIntervals.length > 0 
+      ? clickIntervals.reduce((a, b) => a + b, 0) / clickIntervals.length 
+      : 0;
+    const minInterval = clickIntervals.length > 0 
+      ? Math.min(...clickIntervals) 
+      : 0;
+    
+    axios.post(`${API_BASE}/heartbeat`, {
+      user_id: currentUser,
+      session_id: sessionId,
+      page_number: currentPage,
+      document_name: fileName,
+      
+      // Current page stats
+      time_on_page_seconds: Math.round((Date.now() - pageStartTime) / 1000),
+      words_on_page: totalWordsOnPage,
+      words_clicked_on_page: wordsClickedThisPage,
+      
+      // ✅ ADD THESE:
+      total_clicks_in_session: totalClicksInSession,
+      average_click_interval_seconds: Math.round(avgInterval * 10) / 10, // 1 decimal
+      minimum_click_interval_seconds: Math.round(minInterval * 10) / 10,
+      
+      timestamp: new Date().toISOString()
+    }).catch(err => console.error("Heartbeat failed:", err));
+    
+    console.log("💓 Heartbeat sent");
+  }, 30000);
+  
+  return () => clearInterval(heartbeatInterval);
+}, [sessionId, wordData, pageStartTime, wordsClickedThisPage, currentPage, fileName, totalClicksInSession, clickIntervals]);
+
+
+
+const startSession = async () => {
+    try {
+      const response = await axios.post(`${API_BASE}/start_session`, {
+        user_id: currentUser
+      });
+      
+      const newSessionId = response.data.session_id;
+      setSessionId(newSessionId);
+      console.log(`✅ Session started: ${newSessionId}`);
+    } catch (error) {
+      console.error("Failed to start session:", error);
+    }
+  };
 
 // launch a warmup call to the backend on initial render
 // --- App.jsx (Replace the useEffect that starts around line 53) ---
@@ -99,23 +181,27 @@ useEffect(() => {
 
 // ✅ Always send most recent wordData when leaving page, changing page, or resetting
 useEffect(() => {
-  // When user leaves the page (closing tab, refreshing)
+  // Handle browser tab close / page refresh
   const handleBeforeUnload = () => {
-    if (!isAuthenticated || !currentUser || wordData.length === 0) return;
-    sendUpdateData(wordData, true); // true = useBeacon
-  };
-
-  window.addEventListener("beforeunload", handleBeforeUnload);
-
-  return () => {
-    // When navigating away (page change)
-    if (wordData.length > 0) {
-      sendUpdateData(wordData);
+    if (sessionId) {
+      // ✅ ONLY end session, heartbeat system handles the rest
+      const sessionPayload = JSON.stringify({
+        user_id: currentUser,
+        session_id: sessionId
+      });
+      navigator.sendBeacon(`${API_BASE}/end_session`, new Blob([sessionPayload], { type: "application/json" }));
     }
-    window.removeEventListener("beforeunload", handleBeforeUnload);
   };
-  // reattach listener when data or user changes
-}, [isAuthenticated, currentUser, currentPage]);
+  
+  window.addEventListener("beforeunload", handleBeforeUnload);
+  
+  return () => {
+    window.removeEventListener("beforeunload", handleBeforeUnload);
+    if (sessionId) {
+      endSession();
+    }
+  };
+}, [sessionId]);
 
 
 
@@ -160,21 +246,172 @@ const checkPersistedLogin = () => {
 
 // Loggout section 
 
-const handleLogout = () => {
-    // 1. Clear the persistent storage key
+ const handleLogout = () => {
+    // End session before logging out
+    if (sessionId) {
+      endSession();
+    }
+    
+    // Clear persistent storage
     localStorage.removeItem('currentUserId');
     
-    // 2. Reset the application state
+    // Reset state
     setCurrentUser(null);
     setIsAuthenticated(false);
-    
-    // 3. (Optional but recommended) Clear any temporary data to ensure a clean slate
+    setSessionId(null);
     setWordData([]);
     setTotalLength(0);
     setPrefetchedData({});
     
     console.log("User logged out successfully.");
+  };
+
+const endSession = async () => {
+    if (!sessionId) return;
+    
+    try {
+      // Use sendBeacon for reliable delivery on page close
+      const payload = JSON.stringify({
+        user_id: currentUser,
+        session_id: sessionId
+      });
+      
+      const blob = new Blob([payload], { type: "application/json" });
+      navigator.sendBeacon(`${API_BASE}/end_session`, blob);
+      
+      console.log(`✅ Session ended: ${sessionId}`);
+    } catch (error) {
+      console.error("Failed to end session:", error);
+    }
+  };
+
+
+//=====================================TRACKING SECTION======================
+
+// Add this useEffect
+
+
+
+function handleSwipe(id) {
+  setWordData(prev =>
+    prev.map(paragraph =>
+      paragraph.map(word => {
+        if (word.id !== id) return word;
+
+        // ✅ ADD THIS: Track the click
+        trackWordClick(id, {
+          showFurigana: word.showFurigana,
+          showTranslation: word.showTranslation
+        });
+
+        // Existing logic for state transitions
+        let newState;
+        if (word.showFurigana && word.showTranslation) {
+          newState = { ...word, showFurigana: false, showTranslation: false };
+        } else if (!word.showFurigana && word.showTranslation) {
+          newState = { ...word, showFurigana: true };
+        } else if (word.showFurigana && !word.showTranslation) {
+          newState = { ...word, showTranslation: true };
+        } else {
+          newState = { ...word, showFurigana: true };
+        }
+
+        // ✅ ADD THIS: Log complete interaction when user hides everything
+        if (!newState.showFurigana && !newState.showTranslation && sessionId) {
+          logWordInteraction(id, word.kanji || word.value, newState);
+        }
+
+        return newState;
+      })
+    )
+  );
+}
+
+// ✅ ADD THESE NEW FUNCTIONS:
+const trackWordClick = (wordId, currentState) => {
+  const now = Date.now();
+  
+  // Track click intervals
+  if (lastClickTime !== null) {
+    const interval = (now - lastClickTime) / 1000; // seconds
+    setClickIntervals(prev => [...prev, interval]);
+  }
+  setLastClickTime(now);
+  
+  // Increment counters
+  setWordsClickedThisPage(prev => prev + 1);
+  setTotalClicksInSession(prev => prev + 1);
+  
+  // Initialize tracking for this word if needed
+  if (!wordInteractionTracker[wordId]) {
+    setWordInteractionTracker(prev => ({
+      ...prev,
+      [wordId]: {
+        initialState: { ...currentState },
+        clickSequence: [],
+        startTime: now
+      }
+    }));
+  }
+  
+  // Add click to sequence
+  setWordInteractionTracker(prev => ({
+    ...prev,
+    [wordId]: {
+      ...prev[wordId],
+      clickSequence: [
+        ...prev[wordId].clickSequence,
+        {
+          action: determineAction(currentState),
+          timestamp: new Date().toISOString()
+        }
+      ]
+    }
+  }));
 };
+
+const determineAction = (state) => {
+  if (state.showFurigana && state.showTranslation) {
+    return "hide_all";
+  } else if (!state.showFurigana && state.showTranslation) {
+    return "show_furigana";
+  } else if (state.showFurigana && !state.showTranslation) {
+    return "show_translation";
+  } else {
+    return "show_furigana";
+  }
+};
+
+const logWordInteraction = async (wordId, word, finalState) => {
+    const tracker = wordInteractionTracker[wordId];
+    if (!tracker) return;
+    
+    const timeSpent = Date.now() - tracker.startTime;
+    
+    try {
+      await axios.post(`${API_BASE}/log_word_interaction`, {
+        user_id: currentUser,
+        session_id: sessionId,
+        word: word,
+        initial_state: tracker.initialState,
+        final_state: finalState,
+        click_sequence: tracker.clickSequence,
+        time_spent_ms: timeSpent
+      });
+      
+      console.log(`📝 Word interaction logged: ${word}`);
+      
+      // Clear tracker for this word
+      setWordInteractionTracker(prev => {
+        const newTracker = { ...prev };
+        delete newTracker[wordId];
+        return newTracker;
+      });
+      
+    } catch (error) {
+      console.error("Failed to log word interaction:", error);
+    }
+  };
 
 
 // ----- File section ------------
@@ -223,20 +460,28 @@ const handleLogout = () => {
   };
 
   const handleReset = () => {
-    // 🔑 NEW: Explicitly send the final state of the current page before clearing state
-     sendUpdateData(wordData); // always send before clearing
+    // Log final page state before resetting
+    if (sessionId && wordData.length > 0) {
+      logPageView();
+    }
+    
+    // Send proficiency updates (existing logic)
+    sendUpdateData(wordData);
 
+    // Reset state (existing logic)
     if (controllerRef.current) {controllerRef.current.abort();}
     if (fileInputRef.current) {fileInputRef.current.value = "";}
     if (imageInputRef.current) {imageInputRef.current.value = "";}
     setWordData([]);
-    setCurrentPage(0); // If this is already 0, the useEffect cleanup won't run.
+    setCurrentPage(0);
     setTotalLength(0);
     setFile(null);
     setImageFile(null);
     setSelectedBook(null);
     setIsLoading(false);
     setPrefetchedData({});
+    setWordsClickedThisPage(0);
+    setWordInteractionTracker({});
   };
 
   async function fetchAPI(pageNumber, onSuccess) {
@@ -422,26 +667,40 @@ function defineWordDisplayByDifficulty(word) {
 };
 
 
-   function handleSwipe(id) {
-  setWordData(prev =>
-    prev.map(paragraph =>
-      paragraph.map(word => {
-        if (word.id !== id) return word; // leave others untouched
+  function handleSwipe(id) {
+    setWordData(prev =>
+      prev.map(paragraph =>
+        paragraph.map(word => {
+          if (word.id !== id) return word;
 
-        // Here you have the clicked word object
-        if (word.showFurigana && word.showTranslation) {
-          return { ...word, showFurigana: false, showTranslation: false };
-        } else if (!word.showFurigana && word.showTranslation) {
-          return { ...word, showFurigana: true };
-        } else if (word.showFurigana && !word.showTranslation) {
-          return { ...word, showTranslation: true };
-        } else {
-          return { ...word, showFurigana: true };
-        }
-      })
-    )
-  );
-}
+          // Track this click
+          trackWordClick(id, {
+            showFurigana: word.showFurigana,
+            showTranslation: word.showTranslation
+          });
+
+          // Determine next state (existing logic)
+          let newState;
+          if (word.showFurigana && word.showTranslation) {
+            newState = { ...word, showFurigana: false, showTranslation: false };
+          } else if (!word.showFurigana && word.showTranslation) {
+            newState = { ...word, showFurigana: true };
+          } else if (word.showFurigana && !word.showTranslation) {
+            newState = { ...word, showTranslation: true };
+          } else {
+            newState = { ...word, showFurigana: true };
+          }
+
+          // If user returned to hidden state, log the complete interaction
+          if (!newState.showFurigana && !newState.showTranslation) {
+            logWordInteraction(id, word.kanji || word.value, newState);
+          }
+
+          return newState;
+        })
+      )
+    );
+  }
 
 
 
@@ -562,7 +821,9 @@ function defineWordDisplayByDifficulty(word) {
       </div> */}
       
       <div> 
-        <p className="userInformation">Click on words to toggle furigana and translations!</p>
+        <p className="userInformation">Instructions :</p>
+        <p className="userInformation"> The objective of this is to help you read anything in Japanese.</p>
+        <p className="userInformation"> If you cannot read a word, click it to toggle furigana and translations to match your level</p>
         {/*<p className="userInformation">try to change the JLPT difficulty level as well!</p>*/}
       </div>
       <div className="main_text" style={{ lineHeight: 1.8 }}>
