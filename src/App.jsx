@@ -511,14 +511,33 @@ const logWordInteraction = async (wordId, word, finalState) => {
   };
 
   const handleReset = () => {
+    // Send final heartbeat if there's active data
+    if (sessionId && wordData.length > 0) {
+      const totalWordsOnPage = wordData.flat().filter(w => w.type === "word").length;
+      axios.post(`${API_BASE}/heartbeat`, {
+        user_id: currentUser,
+        session_id: sessionId,
+        page_number: currentPage,
+        document_name: fileName,
+        time_on_page_seconds: Math.round((Date.now() - pageStartTime) / 1000),
+        words_on_page: totalWordsOnPage,
+        words_clicked_on_page: wordsClickedThisPage,
+        total_clicks_in_session: totalClicksInSession,
+        average_click_interval_seconds: clickIntervals.length > 0 ? Math.round((clickIntervals.reduce((a,b) => a+b, 0) / clickIntervals.length) * 10) / 10 : 0,
+        minimum_click_interval_seconds: clickIntervals.length > 0 ? Math.round(Math.min(...clickIntervals) * 10) / 10 : 0,
+        timestamp: new Date().toISOString()
+      }).catch(err => console.error("Failed to send final heartbeat:", err));
+    }
     
     // Send proficiency updates (existing logic)
     sendUpdateData(wordData);
 
-    // Reset state (existing logic)
+    // Reset file inputs
     if (controllerRef.current) {controllerRef.current.abort();}
     if (fileInputRef.current) {fileInputRef.current.value = "";}
     if (imageInputRef.current) {imageInputRef.current.value = "";}
+    
+    // Reset document state
     setWordData([]);
     setCurrentPage(0);
     setTotalLength(0);
@@ -527,8 +546,14 @@ const logWordInteraction = async (wordId, word, finalState) => {
     setSelectedBook(null);
     setIsLoading(false);
     setPrefetchedData({});
+    
+    // ✅ MAKE SURE ALL ANALYTICS STATE IS RESET:
     setWordsClickedThisPage(0);
     setWordInteractionTracker({});
+    setClickIntervals([]);
+    setLastClickTime(null);
+    setTotalClicksInSession(0);
+    setPageStartTime(Date.now());
   };
 
   async function fetchAPI(pageNumber, onSuccess) {
