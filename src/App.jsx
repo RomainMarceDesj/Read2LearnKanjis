@@ -4,7 +4,7 @@ import './App.css';
 import axios from 'axios';
 
 const MemoizedWord = React.memo(Word);
-const API_BASE = "https://furiganaapi-production.up.railway.app"; // http://127.0.0.1:5000 (local) https://furiganaapi-production.up.railway.app
+const API_BASE = "http://127.0.0.1:5000"; // http://127.0.0.1:5000 (local) https://furiganaapi-production.up.railway.app
 
 
 
@@ -24,15 +24,29 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Tracks login status
   const [authError, setAuthError] = useState(''); // For displaying login/register errors
   const [showRegister, setShowRegister] = useState(false);
-    const [sessionId, setSessionId] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
   const [pageStartTime, setPageStartTime] = useState(Date.now());
   const [wordsClickedThisPage, setWordsClickedThisPage] = useState(0);
   const [wordInteractionTracker, setWordInteractionTracker] = useState({});
   const [lastClickTime, setLastClickTime] = useState(null);
   const [clickIntervals, setClickIntervals] = useState([]);
   const [totalClicksInSession, setTotalClicksInSession] = useState(0);
+  const [isProcessingRect, setIsProcessingRect] = useState(false);
+
+
+
+
+  // Canvas and rectangle states
+  const [capturedImage, setCapturedImage] = useState(null); // Store image for display
+  const [isDrawingMode, setIsDrawingMode] = useState(false); // Enable/disable drawing
+  const [currentRect, setCurrentRect] = useState(null); // Rectangle being drawn
+  const [finalRect, setFinalRect] = useState(null); // Completed rectangle
+  const [isDrawing, setIsDrawing] = useState(false); // Track if user is actively drawing
+  const [selectedHandle, setSelectedHandle] = useState(null); // Which corner is being dragged
+  const [showImagePreview, setShowImagePreview] = useState(false); // Control whether to show preview
   
-  
+
+  const canvasRef = useRef(null);
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -55,12 +69,22 @@ function App() {
     };
   }, [sessionId]);
 
-   useEffect(() => {
-  if (file || imageFile || selectedBook) {
+  useEffect(() => {
+  // Only auto-submit for documents and books, NOT for images in preview mode
+  if (file || selectedBook) {
     handleSubmit();
   }
   // eslint-disable-next-line
-  }, [file, imageFile, selectedBook, currentPage]);
+}, [file, selectedBook, currentPage]);
+
+
+// Redraw canvas when rectangles change
+useEffect(() => {
+  if (showImagePreview) {
+    drawCanvas();
+  }
+}, [finalRect, currentRect, isDrawing, showImagePreview, isProcessingRect]);
+
 
 
   useEffect(() => {
@@ -413,6 +437,334 @@ const logWordInteraction = async (wordId, word, finalState) => {
     }
   };
 
+  // ============ CANVAS DRAWING FUNCTIONS ============
+
+  const getCanvasCoordinates = (e) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return { x: 0, y: 0 };
+      
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+      };
+    };
+
+    const getHandleAtPosition = (x, y) => {
+    if (!finalRect) return null;
+    
+    const handleSize = 12;
+    const threshold = handleSize;
+    
+    const corners = [
+      { name: 'top-left', x: finalRect.x, y: finalRect.y },
+      { name: 'top-right', x: finalRect.x + finalRect.width, y: finalRect.y },
+      { name: 'bottom-right', x: finalRect.x + finalRect.width, y: finalRect.y + finalRect.height },
+      { name: 'bottom-left', x: finalRect.x, y: finalRect.y + finalRect.height }
+    ];
+    
+    for (let corner of corners) {
+      const distance = Math.sqrt(Math.pow(x - corner.x, 2) + Math.pow(y - corner.y, 2));
+      if (distance <= threshold) {
+        return corner.name;
+      }
+    }
+    
+    return null;
+  };
+
+
+  const handleMouseDown = (e) => {
+    if (!isDrawingMode) return;
+    
+    const coords = getCanvasCoordinates(e);
+    
+    // Check if clicking on a handle
+    const handle = getHandleAtPosition(coords.x, coords.y);
+    
+    if (handle) {
+      // Start resizing
+      setSelectedHandle(handle);
+      setIsDrawing(true);
+    } else if (finalRect) {
+      // Clicking outside existing rectangle - do nothing (or could start new rectangle)
+      return;
+    } else {
+      // Start drawing new rectangle
+      setIsDrawing(true);
+      setCurrentRect({
+        startX: coords.x,
+        startY: coords.y,
+        width: 0,
+        height: 0
+      });
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDrawingMode) return;
+    
+    const coords = getCanvasCoordinates(e);
+    
+    // Update cursor based on handle hover
+    const canvas = canvasRef.current;
+    if (canvas && !isDrawing) {
+      const handle = getHandleAtPosition(coords.x, coords.y);
+      if (handle) {
+        const cursorMap = {
+          'top-left': 'nw-resize',
+          'top-right': 'ne-resize',
+          'bottom-right': 'se-resize',
+          'bottom-left': 'sw-resize'
+        };
+        canvas.style.cursor = cursorMap[handle];
+      } else {
+        canvas.style.cursor = 'crosshair';
+      }
+    }
+    
+    if (!isDrawing) return;
+    
+    // Handle resizing
+    if (selectedHandle && finalRect) {
+      let newRect = { ...finalRect };
+      
+      switch (selectedHandle) {
+        case 'top-left':
+          newRect.width = finalRect.width + (finalRect.x - coords.x);
+          newRect.height = finalRect.height + (finalRect.y - coords.y);
+          newRect.x = coords.x;
+          newRect.y = coords.y;
+          break;
+        case 'top-right':
+          newRect.width = coords.x - finalRect.x;
+          newRect.height = finalRect.height + (finalRect.y - coords.y);
+          newRect.y = coords.y;
+          break;
+        case 'bottom-right':
+          newRect.width = coords.x - finalRect.x;
+          newRect.height = coords.y - finalRect.y;
+          break;
+        case 'bottom-left':
+          newRect.width = finalRect.width + (finalRect.x - coords.x);
+          newRect.height = coords.y - finalRect.y;
+          newRect.x = coords.x;
+          break;
+      }
+      
+      // Prevent negative dimensions
+      if (newRect.width > 10 && newRect.height > 10) {
+        setFinalRect(newRect);
+      }
+    } else if (currentRect) {
+      // Handle drawing new rectangle
+      const width = coords.x - currentRect.startX;
+      const height = coords.y - currentRect.startY;
+      
+      setCurrentRect({
+        ...currentRect,
+        width: width,
+        height: height
+      });
+    }
+    
+    drawCanvas();
+  };
+
+
+  const handleMouseUp = (e) => {
+    if (!isDrawing) return;
+    
+    setIsDrawing(false);
+    setSelectedHandle(null);
+    
+    // If we were drawing a new rectangle (not resizing)
+    if (currentRect && !selectedHandle) {
+      if (Math.abs(currentRect.width) > 10 && Math.abs(currentRect.height) > 10) {
+        // Normalize rectangle
+        const normalized = {
+          x: currentRect.width < 0 ? currentRect.startX + currentRect.width : currentRect.startX,
+          y: currentRect.height < 0 ? currentRect.startY + currentRect.height : currentRect.startY,
+          width: Math.abs(currentRect.width),
+          height: Math.abs(currentRect.height)
+        };
+        
+        setFinalRect(normalized);
+        setCurrentRect(null);
+      } else {
+        // Rectangle too small, discard it
+        setCurrentRect(null);
+      }
+    }
+    
+    drawCanvas();
+  };
+
+  const drawCanvas = () => {
+  const canvas = canvasRef.current;
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw final rectangle (if exists)
+  if (finalRect) {
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([]);
+    ctx.strokeRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
+    
+    // Black border for visibility
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
+    
+    // Show loading state
+    if (isProcessingRect) {
+      // Semi-transparent white background
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.fillRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
+      
+      // "Processing..." text
+      ctx.fillStyle = 'black';
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Processing...', finalRect.x + finalRect.width / 2, finalRect.y + finalRect.height / 2);
+    }
+    
+    // Draw corner handles (only if not processing)
+    if (!isProcessingRect) {
+      const handleSize = 12;
+      const corners = [
+        { x: finalRect.x, y: finalRect.y, cursor: 'nw-resize' },
+        { x: finalRect.x + finalRect.width, y: finalRect.y, cursor: 'ne-resize' },
+        { x: finalRect.x + finalRect.width, y: finalRect.y + finalRect.height, cursor: 'se-resize' },
+        { x: finalRect.x, y: finalRect.y + finalRect.height, cursor: 'sw-resize' }
+      ];
+      
+      corners.forEach(corner => {
+        ctx.fillStyle = 'white';
+        ctx.fillRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
+        
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
+      });
+    }
+  }
+
+  // Draw current rectangle being drawn (if actively drawing)
+  if (currentRect && isDrawing) {
+    ctx.strokeStyle = 'blue';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    
+    const x = currentRect.width < 0 ? currentRect.startX + currentRect.width : currentRect.startX;
+    const y = currentRect.height < 0 ? currentRect.startY + currentRect.height : currentRect.startY;
+    const w = Math.abs(currentRect.width);
+    const h = Math.abs(currentRect.height);
+    
+    ctx.strokeRect(x, y, w, h);
+  }
+  };
+
+
+
+  // ============ TOUCH EVENT HANDLERS ============
+
+  const handleTouchStart = (e) => {
+    if (!isDrawingMode) return;
+    e.preventDefault(); // Prevent scrolling while drawing
+    
+    const touch = e.touches[0];
+    const mouseEvent = new MouseEvent('mousedown', {
+      clientX: touch.clientX,
+      clientY: touch.clientY
+    });
+    handleMouseDown(mouseEvent);
+  };
+
+  const handleTouchMove = (e) => {
+    if (!isDrawingMode) return;
+    e.preventDefault(); // Prevent scrolling while drawing
+    
+    const touch = e.touches[0];
+    const mouseEvent = new MouseEvent('mousemove', {
+      clientX: touch.clientX,
+      clientY: touch.clientY
+    });
+    handleMouseMove(mouseEvent);
+  };
+
+  const handleTouchEnd = (e) => {
+    if (!isDrawingMode) return;
+    e.preventDefault();
+    
+    const mouseEvent = new MouseEvent('mouseup', {});
+    handleMouseUp(mouseEvent);
+  };
+
+// ============ IMAGE CROPPING ============
+
+const cropImageToBlob = async () => {
+  if (!finalRect || !capturedImage) return null;
+  
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      // Create a temporary canvas for cropping
+      const cropCanvas = document.createElement('canvas');
+      const ctx = cropCanvas.getContext('2d');
+      
+      // Get the actual canvas to calculate scale
+      const displayCanvas = canvasRef.current;
+      if (!displayCanvas) {
+        reject(new Error('Canvas not found'));
+        return;
+      }
+      
+      // Calculate scale between display size and actual image size
+      const scaleX = img.naturalWidth / displayCanvas.width;
+      const scaleY = img.naturalHeight / displayCanvas.height;
+      
+      // Scale the crop rectangle to match actual image dimensions
+      const cropX = finalRect.x * scaleX;
+      const cropY = finalRect.y * scaleY;
+      const cropWidth = finalRect.width * scaleX;
+      const cropHeight = finalRect.height * scaleY;
+      
+      // Set crop canvas size to the cropped dimensions
+      cropCanvas.width = cropWidth;
+      cropCanvas.height = cropHeight;
+      
+      // Draw the cropped portion
+      ctx.drawImage(
+        img,
+        cropX, cropY, cropWidth, cropHeight,  // Source rectangle
+        0, 0, cropWidth, cropHeight            // Destination rectangle
+      );
+      
+      // Convert canvas to blob
+      cropCanvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Failed to create blob'));
+        }
+      }, 'image/jpeg', 0.95);
+    };
+    
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = capturedImage;
+  });
+};
+
 
 // ----- File section ------------
 
@@ -431,14 +783,58 @@ const logWordInteraction = async (wordId, word, finalState) => {
     setSelectedBook(null);
 
     const uploadedFile = event.target.files[0];
-    setImageFile(uploadedFile);
-    setCurrentPage(0);
-    setPrefetchedData({});
-  };
+    
+    if (uploadedFile) {
+      // Create a URL for the image to display it
+      const imageUrl = URL.createObjectURL(uploadedFile);
+      setCapturedImage(imageUrl);
+      setImageFile(uploadedFile); // Still store the file for later
+      setShowImagePreview(true); // Show the preview mode
+      setCurrentPage(0);
+      setPrefetchedData({});
+    }
+    };
 
-    const handleSubmit = () => {
-    if (file || imageFile || selectedBook) {
+  const handleSubmit = async () => {
+    if (file || selectedBook) {
       fetchAPI(currentPage, handleApiData);
+    } else if (imageFile && finalRect) {
+      // Process cropped image
+      try {
+        setIsLoading(true);
+        
+        // Crop the image
+        const croppedBlob = await cropImageToBlob();
+        
+        if (!croppedBlob) {
+          console.error('Failed to crop image');
+          setIsLoading(false);
+          return;
+        }
+        
+        // Create a new File from the blob
+        const croppedFile = new File([croppedBlob], 'cropped_image.jpg', { type: 'image/jpeg' });
+        
+        // Send to backend
+        const formData = new FormData();
+        formData.append('image_file', croppedFile, croppedFile.name);
+        formData.append('start_position', 0);
+        formData.append('page_size', pageSizeCharacter);
+        formData.append('user_id', currentUser);
+        
+        const response = await axios.post(`${API_BASE}/ocr`, formData, {
+          signal: controllerRef.current?.signal
+        });
+        
+        handleApiData(response.data);
+        setIsLoading(false);
+        setBackendStatus("Back-end connected!");
+        
+      } catch (error) {
+        console.error('Error processing cropped image:', error);
+        setIsLoading(false);
+        setBackendStatus("Error processing image");
+      }
     }
   };
 
@@ -461,9 +857,7 @@ const logWordInteraction = async (wordId, word, finalState) => {
 
   const handleReset = () => {
     // Log final page state before resetting
-    if (sessionId && wordData.length > 0) {
-      logPageView();
-    }
+    
     
     // Send proficiency updates (existing logic)
     sendUpdateData(wordData);
@@ -482,6 +876,15 @@ const logWordInteraction = async (wordId, word, finalState) => {
     setPrefetchedData({});
     setWordsClickedThisPage(0);
     setWordInteractionTracker({});
+    
+    setCapturedImage(null);
+    setShowImagePreview(false);
+    setIsDrawingMode(false);
+    setCurrentRect(null);
+    setFinalRect(null);
+    setIsDrawing(false);
+    setSelectedHandle(null);
+    setIsProcessingRect(false);
   };
 
   async function fetchAPI(pageNumber, onSuccess) {
@@ -801,6 +1204,112 @@ function defineWordDisplayByDifficulty(word) {
         />
       </div>
 
+      {/* Image Preview Section with Canvas */}
+      {showImagePreview && capturedImage && (
+        <div className="image-preview-section" style={{ margin: '2rem 0', border: '2px solid #ccc', padding: '1rem' }}>
+          <h3>Select Text Area</h3>
+          
+          {/* Container for image and canvas */}
+          <div style={{ 
+            position: 'relative', 
+            maxWidth: '800px', 
+            margin: '1rem auto',
+            display: 'inline-block'
+          }}>
+            {/* Image */}
+            <img 
+              src={capturedImage} 
+              alt="Captured" 
+              style={{ 
+                maxWidth: '100%', 
+                maxHeight: '500px', 
+                display: 'block'
+              }}
+              onLoad={(e) => {
+                // When image loads, set up canvas to match
+                const img = e.target;
+                const canvas = canvasRef.current;
+                if (canvas) {
+                  canvas.width = img.width;
+                  canvas.height = img.height;
+                  canvas.style.width = `${img.offsetWidth}px`;
+                  canvas.style.height = `${img.offsetHeight}px`;
+                }
+              }}
+            />
+            
+            {/* Canvas overlay */}
+              <canvas
+                ref={canvasRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp} // Treat leaving canvas as mouse up
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                onTouchCancel={handleTouchEnd}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  cursor: isDrawingMode ? 'crosshair' : 'default',
+                  pointerEvents: isDrawingMode ? 'auto' : 'none'
+                }}
+              />
+          </div>
+          
+          {/* Buttons */}
+            <div style={{ marginTop: '1rem' }}>
+              <button 
+                onClick={() => setIsDrawingMode(!isDrawingMode)}
+                style={{ 
+                  marginRight: '0.5rem',
+                  backgroundColor: isDrawingMode ? '#4CAF50' : '#ddd',
+                  color: isDrawingMode ? 'white' : 'black'
+                }}
+              >
+                {isDrawingMode ? 'Drawing Enabled ✓' : 'Enable Drawing'}
+              </button>
+              
+              {finalRect && (
+                <button 
+                  onClick={() => {
+                    setFinalRect(null);
+                    setCurrentRect(null);
+                    drawCanvas();
+                  }}
+                  style={{ marginRight: '0.5rem' }}
+                >
+                  Clear Rectangle
+                </button>
+              )}
+              
+              <button onClick={() => {
+                setShowImagePreview(false);
+                setCapturedImage(null);
+                setImageFile(null);
+                setIsDrawingMode(false);
+                setFinalRect(null);
+                setCurrentRect(null);
+              }}>
+                Cancel
+              </button>
+              
+              <button 
+                onClick={async () => {
+                  setIsProcessingRect(true);
+                  await handleSubmit();
+                  // Don't hide preview yet - we'll show results on the image
+                }} 
+                style={{ marginLeft: '0.5rem' }}
+                disabled={!finalRect || isProcessingRect}
+              >
+                {isProcessingRect ? 'Processing...' : 'Send'}
+              </button>
+            </div>
+        </div>
+      )}
       <div> 
         <p className="file-name">{file ? file.name : 'No document selected'}</p>
       </div>
