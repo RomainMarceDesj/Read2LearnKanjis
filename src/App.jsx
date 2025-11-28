@@ -70,47 +70,57 @@ function App() {
 
 
   useEffect(() => {
-  if (!sessionId || wordData.length === 0) return;
-  
-  const heartbeatInterval = setInterval(() => {
-    const totalWordsOnPage = wordData.flat().filter(w => w.type === "word").length;
+    if (!sessionId || wordData.length === 0) return;
     
-    // Calculate click interval stats
-    const avgInterval = clickIntervals.length > 0 
-      ? clickIntervals.reduce((a, b) => a + b, 0) / clickIntervals.length 
-      : 0;
-    const minInterval = clickIntervals.length > 0 
-      ? Math.min(...clickIntervals) 
-      : 0;
+    const heartbeatInterval = setInterval(() => {
+      const totalWordsOnPage = wordData.flat().filter(w => w.type === "word").length;
+      
+      const avgInterval = clickIntervals.length > 0 
+        ? clickIntervals.reduce((a, b) => a + b, 0) / clickIntervals.length 
+        : 0;
+      const minInterval = clickIntervals.length > 0 
+        ? Math.min(...clickIntervals) 
+        : 0;
+      
+      // ✅ Determine document type
+      let docType = "unknown";
+      if (file) {
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (ext === 'pdf') docType = 'pdf';
+        else if (['doc', 'docx'].includes(ext)) docType = 'document';
+        else if (ext === 'txt') docType = 'text';
+      } else if (imageFile) {
+        docType = 'image';
+      } else if (selectedBook) {
+        docType = 'book';
+      }
+      
+      axios.post(`${API_BASE}/heartbeat`, {
+        user_id: currentUser,
+        session_id: sessionId,
+        page_number: currentPage,
+        document_type: docType,  // ✅ Changed from document_name
+        
+        time_on_page_seconds: Math.round((Date.now() - pageStartTime) / 1000),
+        words_on_page: totalWordsOnPage,
+        words_clicked_on_page: wordsClickedThisPage,
+        
+        total_clicks_in_session: totalClicksInSession,
+        average_click_interval_seconds: Math.round(avgInterval * 10) / 10,
+        minimum_click_interval_seconds: Math.round(minInterval * 10) / 10,
+        
+        timestamp: new Date().toISOString()
+      }).catch(err => console.error("Heartbeat failed:", err));
+      
+      console.log("💓 Heartbeat sent");
+    }, 30000);
     
-    axios.post(`${API_BASE}/heartbeat`, {
-      user_id: currentUser,
-      session_id: sessionId,
-      page_number: currentPage,
-      document_name: fileName,
-      
-      // Current page stats
-      time_on_page_seconds: Math.round((Date.now() - pageStartTime) / 1000),
-      words_on_page: totalWordsOnPage,
-      words_clicked_on_page: wordsClickedThisPage,
-      
-      // ✅ ADD THESE:
-      total_clicks_in_session: totalClicksInSession,
-      average_click_interval_seconds: Math.round(avgInterval * 10) / 10, // 1 decimal
-      minimum_click_interval_seconds: Math.round(minInterval * 10) / 10,
-      
-      timestamp: new Date().toISOString()
-    }).catch(err => console.error("Heartbeat failed:", err));
-    
-    console.log("💓 Heartbeat sent");
-  }, 30000);
-  
-  return () => clearInterval(heartbeatInterval);
-}, [sessionId, wordData, pageStartTime, wordsClickedThisPage, currentPage, fileName, totalClicksInSession, clickIntervals]);
+    return () => clearInterval(heartbeatInterval);
+  }, [sessionId, wordData, pageStartTime, wordsClickedThisPage, currentPage, file, imageFile, selectedBook, totalClicksInSession, clickIntervals]);
 
 
 
-const startSession = async () => {
+  const startSession = async () => {
     try {
       const response = await axios.post(`${API_BASE}/start_session`, {
         user_id: currentUser
