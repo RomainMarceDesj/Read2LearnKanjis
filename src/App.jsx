@@ -4,7 +4,8 @@ import './App.css';
 import axios from 'axios';
 
 const MemoizedWord = React.memo(Word);
-const API_BASE = "https://furiganaapi-production.up.railway.app"; // http://127.0.0.1:5000 (local) https://furiganaapi-production.up.railway.app
+const API_BASE = "http://127.0.0.1:5000"; // http://127.0.0.1:5000 (local) https://furiganaapi-production.up.railway.app
+const APP_VERSION = "V0App";  // ✅ Version identifier for App.jsx
 
 
 
@@ -31,7 +32,7 @@ function App() {
   const [lastClickTime, setLastClickTime] = useState(null);
   const [clickIntervals, setClickIntervals] = useState([]);
   const [totalClicksInSession, setTotalClicksInSession] = useState(0);
-  
+  const [totalClicksAny, setTotalClicksAny] = useState(0);
   
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -73,8 +74,23 @@ function App() {
     if (!sessionId || wordData.length === 0) return;
     
     const heartbeatInterval = setInterval(() => {
-      const totalWordsOnPage = wordData.flat().filter(w => w.type === "word").length;
+      // ✅ Count ALL words on page (kanji and non-kanji)
+      const allWords = wordData.flat().filter(w => w.type === "word");
+      const totalWordsOnPage = allWords.length;
       
+      // ✅ Count only kanji words separately
+      const kanjiWordsOnPage = allWords.filter(w => w.kanji).length;
+      
+      // ✅ Count unique words clicked (not total clicks)
+      const uniqueWordsClicked = Object.keys(wordInteractionTracker).length;
+      
+      // ✅ Count kanji words that were clicked
+      const kanjiWordsClicked = Object.keys(wordInteractionTracker).filter(wordId => {
+        const word = allWords.find(w => w.id === parseInt(wordId));
+        return word && word.kanji;
+      }).length;
+      
+      // Calculate click interval stats
       const avgInterval = clickIntervals.length > 0 
         ? clickIntervals.reduce((a, b) => a + b, 0) / clickIntervals.length 
         : 0;
@@ -82,53 +98,45 @@ function App() {
         ? Math.min(...clickIntervals) 
         : 0;
       
-      // ✅ Determine document type
-      let docType = "unknown";
-      if (file) {
-        const ext = file.name.split('.').pop().toLowerCase();
-        if (ext === 'pdf') docType = 'pdf';
-        else if (['doc', 'docx'].includes(ext)) docType = 'document';
-        else if (ext === 'txt') docType = 'text';
-      } else if (imageFile) {
-        docType = 'image';
-      } else if (selectedBook) {
-        docType = 'book';
-      }
-      
       axios.post(`${API_BASE}/heartbeat`, {
         user_id: currentUser,
         session_id: sessionId,
+        app_version: APP_VERSION,
         page_number: currentPage,
-        document_type: docType,  // ✅ Changed from document_name
+        document_name: fileName,
         
+        // Current page stats
         time_on_page_seconds: Math.round((Date.now() - pageStartTime) / 1000),
-        words_on_page: totalWordsOnPage,
-        words_clicked_on_page: wordsClickedThisPage,
+        words_on_page: totalWordsOnPage, // ✅ ALL words (kanji + non-kanji)
+        kanji_words_on_page: kanjiWordsOnPage, // ✅ Only kanji words
+        words_clicked_on_page: uniqueWordsClicked, // ✅ Unique words clicked (any type)
+        kanji_words_clicked_on_page: kanjiWordsClicked, // ✅ Only kanji words clicked
+        total_clicks_any: totalClicksAny, // ✅ NEW: Total clicks including re-clicks
         
-        total_clicks_in_session: totalClicksInSession,
+        // Session-wide stats
         average_click_interval_seconds: Math.round(avgInterval * 10) / 10,
         minimum_click_interval_seconds: Math.round(minInterval * 10) / 10,
         
         timestamp: new Date().toISOString()
       }).catch(err => console.error("Heartbeat failed:", err));
       
-      console.log("💓 Heartbeat sent");
-    }, 30000);
+      console.log(`💓 Heartbeat: Words=${totalWordsOnPage}, Kanji=${kanjiWordsOnPage}, Clicked=${uniqueWordsClicked}, Total Clicks=${totalClicksAny}`);
+    }, 5000);
     
     return () => clearInterval(heartbeatInterval);
-  }, [sessionId, wordData, pageStartTime, wordsClickedThisPage, currentPage, file, imageFile, selectedBook, totalClicksInSession, clickIntervals]);
-
+  }, [sessionId, wordData, pageStartTime, wordsClickedThisPage, currentPage, fileName, clickIntervals, wordInteractionTracker, totalClicksAny]);
 
 
   const startSession = async () => {
     try {
       const response = await axios.post(`${API_BASE}/start_session`, {
-        user_id: currentUser
+        user_id: currentUser,
+        app_version: APP_VERSION  // ✅ NEW: Send version info
       });
       
       const newSessionId = response.data.session_id;
       setSessionId(newSessionId);
-      console.log(`✅ Session started: ${newSessionId}`);
+      console.log(`✅ Session started: ${newSessionId} (Version: ${APP_VERSION})`);
     } catch (error) {
       console.error("Failed to start session:", error);
     }
@@ -338,47 +346,78 @@ function handleSwipe(id) {
 }
 
 // ✅ ADD THESE NEW FUNCTIONS:
-const trackWordClick = (wordId, currentState) => {
-  const now = Date.now();
-  
-  // Track click intervals
-  if (lastClickTime !== null) {
-    const interval = (now - lastClickTime) / 1000; // seconds
-    setClickIntervals(prev => [...prev, interval]);
-  }
-  setLastClickTime(now);
-  
-  // Increment counters
-  setWordsClickedThisPage(prev => prev + 1);
-  setTotalClicksInSession(prev => prev + 1);
-  
-  // Initialize tracking for this word if needed
-  if (!wordInteractionTracker[wordId]) {
+  const trackWordClick = (wordId, currentState) => {
+    console.log("📍 trackWordClick START", { wordId, currentState });
+    
+    const now = Date.now();
+    
+    // ✅ DEDUPLICATION: Check if this is a duplicate call within 100ms
+    const tracker = wordInteractionTracker[wordId];
+    if (tracker?.clickSequence?.length > 0) {
+      const lastClick = tracker.clickSequence[tracker.clickSequence.length - 1];
+      const lastTime = new Date(lastClick.timestamp).getTime();
+      const timeDiff = now - lastTime;
+      
+      if (timeDiff < 100) {
+        console.log(`⚠️ DUPLICATE CLICK detected (${timeDiff}ms ago), IGNORING`);
+        return; // ← Exit early, don't track
+      }
+    }
+    
+    // Track click intervals
+    if (lastClickTime !== null) {
+      const interval = (now - lastClickTime) / 1000;
+      setClickIntervals(prev => [...prev, interval]);
+    }
+    setLastClickTime(now);
+    
+    // Increment ALL click counters
+    console.log("📍 Current totalClicksAny:", totalClicksAny);
+    setTotalClicksAny(prev => {
+      console.log("📍 Incrementing totalClicksAny from", prev, "to", prev + 1);
+      return prev + 1;
+    });
+    
+    // Only increment "words clicked this page" once per word
+    if (!wordInteractionTracker[wordId]) {
+      console.log("📍 First click on this word, incrementing wordsClickedThisPage");
+      setWordsClickedThisPage(prev => prev + 1);
+    }
+    
+    // Initialize tracking for this word if needed
+    if (!wordInteractionTracker[wordId]) {
+      console.log("📍 Initializing tracker for word", wordId);
+      setWordInteractionTracker(prev => ({
+        ...prev,
+        [wordId]: {
+          initialState: { ...currentState },
+          clickSequence: [],
+          startTime: now
+        }
+      }));
+    }
+    
+    // Add click to sequence
+    const action = determineAction(currentState);
+    console.log("📍 Adding action to sequence:", action);
+    
     setWordInteractionTracker(prev => ({
       ...prev,
       [wordId]: {
-        initialState: { ...currentState },
-        clickSequence: [],
-        startTime: now
+        ...prev[wordId],
+        clickSequence: [
+          ...prev[wordId].clickSequence,
+          {
+            action: action,
+            timestamp: new Date().toISOString()
+          }
+        ]
       }
     }));
-  }
-  
-  // Add click to sequence
-  setWordInteractionTracker(prev => ({
-    ...prev,
-    [wordId]: {
-      ...prev[wordId],
-      clickSequence: [
-        ...prev[wordId].clickSequence,
-        {
-          action: determineAction(currentState),
-          timestamp: new Date().toISOString()
-        }
-      ]
-    }
-  }));
-};
+    
+    console.log("📍 trackWordClick END");
+  };
+
 
 const determineAction = (state) => {
   if (state.showFurigana && state.showTranslation) {
@@ -392,11 +431,35 @@ const determineAction = (state) => {
   }
 };
 
-const logWordInteraction = async (wordId, word, finalState) => {
+  const logWordInteraction = async (wordId, word, finalState) => {
     const tracker = wordInteractionTracker[wordId];
     if (!tracker) return;
     
     const timeSpent = Date.now() - tracker.startTime;
+    
+    // ✅ Determine the HIGHEST level of help the user accessed
+    let maxHelpLevel = "nothing";
+    
+    // Check all clicks in sequence
+    for (const click of tracker.clickSequence) {
+      if (click.action === "show_translation") {
+        maxHelpLevel = "translation"; // Highest level
+        break;
+      } else if (click.action === "show_furigana" && maxHelpLevel === "nothing") {
+        maxHelpLevel = "furigana";
+      }
+    }
+    
+    // ✅ IMPORTANT: If sequence is empty, check initial state
+    if (tracker.clickSequence.length === 0) {
+      if (tracker.initialState.showFurigana && tracker.initialState.showTranslation) {
+        maxHelpLevel = "translation";
+      } else if (tracker.initialState.showFurigana) {
+        maxHelpLevel = "furigana";
+      }
+    }
+    
+    console.log(`🔍 Word: ${word}, Clicks: ${tracker.clickSequence.length}, Max Help: ${maxHelpLevel}`);
     
     try {
       await axios.post(`${API_BASE}/log_word_interaction`, {
@@ -405,11 +468,13 @@ const logWordInteraction = async (wordId, word, finalState) => {
         word: word,
         initial_state: tracker.initialState,
         final_state: finalState,
+        max_help_level: maxHelpLevel, // ✅ This is critical
         click_sequence: tracker.clickSequence,
-        time_spent_ms: timeSpent
+        time_spent_ms: timeSpent,
+        num_clicks: tracker.clickSequence.length
       });
       
-      console.log(`📝 Word interaction logged: ${word}`);
+      console.log(`📝 Word interaction logged: ${word} (max help: ${maxHelpLevel})`);
       
       // Clear tracker for this word
       setWordInteractionTracker(prev => {
@@ -422,6 +487,8 @@ const logWordInteraction = async (wordId, word, finalState) => {
       console.error("Failed to log word interaction:", error);
     }
   };
+
+
 
 
 // ----- File section ------------
@@ -458,6 +525,7 @@ const logWordInteraction = async (wordId, word, finalState) => {
   setLastClickTime(null);
   setPageStartTime(Date.now());
   setWordInteractionTracker({});
+  setTotalClicksAny(0);
   };
 
   const handleImageFileChange = (event) => {
@@ -495,6 +563,7 @@ const logWordInteraction = async (wordId, word, finalState) => {
     setLastClickTime(null);
     setPageStartTime(Date.now());
     setWordInteractionTracker({});
+    setTotalClicksAny(0);
   };
 
     const handleSubmit = () => {
@@ -564,6 +633,7 @@ const logWordInteraction = async (wordId, word, finalState) => {
     setLastClickTime(null);
     setTotalClicksInSession(0);
     setPageStartTime(Date.now());
+    setTotalClicksAny(0);
   };
 
   async function fetchAPI(pageNumber, onSuccess) {
@@ -687,102 +757,72 @@ function defineWordDisplayByDifficulty(word) {
   
   // Function to send the final state of all words on a page to the API
   const sendUpdateData = (dataToSend, useBeacon = false) => {
-    console.log("sendUpdateData called", {
-      isAuthenticated,
-      currentUser,
-      dataLength: dataToSend.length
-    });
-    if (!isAuthenticated || !currentUser || dataToSend.length === 0) return;
+      console.log("sendUpdateData called", {
+        isAuthenticated,
+        currentUser,
+        dataLength: dataToSend.length
+      });
+      if (!isAuthenticated || !currentUser || dataToSend.length === 0) return;
 
-  const wordsToUpdate = dataToSend.flat().filter(word => word.kanji);
-  console.log("wordsToUpdate:", wordsToUpdate.map(w => w.kanji || w.value));
-  if (wordsToUpdate.length === 0) return;
+    const wordsToUpdate = dataToSend.flat().filter(word => word.kanji);
+    console.log("wordsToUpdate:", wordsToUpdate.map(w => w.kanji || w.value));
+    if (wordsToUpdate.length === 0) return;
 
-  if (useBeacon) {
-    // ✅ Fallback-safe synchronous sending for tab close
-    wordsToUpdate.forEach(word => {
+    if (useBeacon) {
+      // ✅ Fallback-safe synchronous sending for tab close
+      wordsToUpdate.forEach(word => {
+        const finalShowVal = getFinalShowVal(word);
+        const token = word.kanji || word.value;
+        if (!token) return;
+        const payload = {
+          user_id: currentUser,
+          token: token,
+          final_show_val: finalShowVal,
+          timestamp: new Date().toISOString(),  // ✅ NEW: Add timestamp
+          was_clicked: finalShowVal > 0  // ✅ NEW: Track if it was clicked
+        };
+        const blob = new Blob([JSON.stringify(payload)], {
+          type: "application/json"
+        });
+        navigator.sendBeacon(`${API_BASE}/update_scan_data`, blob);
+      });
+      return;
+    }
+
+    // Normal async sending (navigation/reset)
+    const updates = wordsToUpdate.map(word => {
       const finalShowVal = getFinalShowVal(word);
       const token = word.kanji || word.value;
-      if (!token) return;
+      if (!token) return Promise.resolve();
       const payload = {
         user_id: currentUser,
         token: token,
-        final_show_val: finalShowVal
+        final_show_val: finalShowVal,
+        timestamp: new Date().toISOString(),  // ✅ NEW: Add timestamp
+        was_clicked: finalShowVal > 0  // ✅ NEW: Track if it was clicked
       };
-      const blob = new Blob([JSON.stringify(payload)], {
-        type: "application/json"
-      });
-      navigator.sendBeacon(`${API_BASE}/update_scan_data`, blob);
+      console.log("Payload:", payload);
+      return axios
+        .post(`${API_BASE}/update_scan_data`, payload)
+        .catch(err =>
+          console.error(
+            `Failed to update score for ${token}:`,
+            err.response?.data || err.message
+          )
+        );
     });
-    return;
-  }
 
-  // Normal async sending (navigation/reset)
-  const updates = wordsToUpdate.map(word => {
-    const finalShowVal = getFinalShowVal(word);
-    const token = word.kanji || word.value;
-    if (!token) return Promise.resolve();
-    const payload = {
-      user_id: currentUser,
-      token: token,
-      final_show_val: finalShowVal
-    };
-    console.log("Payload:", payload);
-    return axios
-      .post(`${API_BASE}/update_scan_data`, payload) // ✅ Just pass the correct payload
-      .catch(err =>
-        console.error(
-          `Failed to update score for ${token}:`,
-          err.response?.data || err.message
-        )
+    Promise.allSettled(updates).then(results => {
+      const failed = results.filter(r => r.status === "rejected").length;
+      console.log(
+        failed === 0
+          ? `Successfully sent ${wordsToUpdate.length} updates.`
+          : `${failed} updates failed.`
       );
-  });
-
-  Promise.allSettled(updates).then(results => {
-    const failed = results.filter(r => r.status === "rejected").length;
-    console.log(
-      failed === 0
-        ? `Successfully sent ${wordsToUpdate.length} updates.`
-        : `${failed} updates failed.`
-    );
-  });
-};
+    });
+  };
 
 
-  function handleSwipe(id) {
-    setWordData(prev =>
-      prev.map(paragraph =>
-        paragraph.map(word => {
-          if (word.id !== id) return word;
-
-          // Track this click
-          trackWordClick(id, {
-            showFurigana: word.showFurigana,
-            showTranslation: word.showTranslation
-          });
-
-          // Determine next state (existing logic)
-          let newState;
-          if (word.showFurigana && word.showTranslation) {
-            newState = { ...word, showFurigana: false, showTranslation: false };
-          } else if (!word.showFurigana && word.showTranslation) {
-            newState = { ...word, showFurigana: true };
-          } else if (word.showFurigana && !word.showTranslation) {
-            newState = { ...word, showTranslation: true };
-          } else {
-            newState = { ...word, showFurigana: true };
-          }
-
-          // If user returned to hidden state, log the complete interaction
-          if (!newState.showFurigana && !newState.showTranslation) {
-            logWordInteraction(id, word.kanji || word.value, newState);
-          }
-
-          return newState;
-        })
-      )
-    );
-  }
 
 
 
